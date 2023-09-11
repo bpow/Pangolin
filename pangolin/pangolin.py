@@ -37,28 +37,66 @@ def compute_score(ref_seq, alt_seq, strand, d, models):
         alt_seq = alt_seq.to(torch.device("cuda"))
 
     pangolin = []
+    pangolin_ref = []
+    pangolin_alt = []
     for j in range(4):
         score = []
-        for model in models[3*j:3*j+3]:
+        score_ref = []
+        score_alt = []
+        for model in models[3*j: 3*j+3]:
             with torch.no_grad():
                 ref = model(ref_seq)[0][[1,4,7,10][j],:].cpu().numpy()
                 alt = model(alt_seq)[0][[1,4,7,10][j],:].cpu().numpy()
                 if strand == '-':
                     ref = ref[::-1]
                     alt = alt[::-1]
+
                 l = 2*d+1
                 ndiff = np.abs(len(ref)-len(alt))
-                if len(ref)>len(alt):
-                    alt = np.concatenate([alt[0:l//2+1],np.zeros(ndiff),alt[l//2+1:]])
-                elif len(ref)<len(alt):
-                    alt = np.concatenate([alt[0:l//2],np.max(alt[l//2:l//2+ndiff+1], keepdims=True),alt[l//2+ndiff+1:]])
-                score.append(alt-ref)
+                if len(ref) > len(alt):
+                    alt = np.concatenate([alt[0:l//2+1], np.zeros(ndiff), alt[l//2+1:]])
+                elif len(ref) < len(alt):
+                    alt = np.concatenate([alt[0:l//2], np.max(alt[l//2:l//2+ndiff+1], keepdims=True), alt[l//2+ndiff+1:]])
+
+                score.append(alt - ref)
+                score_ref.append(ref)
+                score_alt.append(alt)
+
         pangolin.append(np.mean(score, axis=0))
-    
+        pangolin_ref.append(np.mean(score_ref, axis=0))
+        pangolin_alt.append(np.mean(score_alt, axis=0))
+
     pangolin = np.array(pangolin)
-    loss = pangolin[np.argmin(pangolin, axis=0), np.arange(pangolin.shape[1])]
-    gain = pangolin[np.argmax(pangolin, axis=0), np.arange(pangolin.shape[1])]
-    return loss, gain
+    pangolin_ref = np.array(pangolin_ref)
+    pangolin_alt = np.array(pangolin_alt)
+    pangolin_argmin = np.argmin(pangolin, axis=0)
+    pangolin_argmax = np.argmax(pangolin, axis=0)
+    pangolin_idx = np.arange(pangolin.shape[1])
+
+    # Since pangolin computes max gain scores across 4 tissues and, separately, max loss scores across the 4 tissues,
+    # the ref and alt probabilities for the gain scores can be from a different tissue than the splice loss probablities.
+    # Therefore, we need to keep the ref and alt probabilities that underlie the gain score, and, separately, also the
+    # ref and alt probabilities that underlie the loss score.
+    loss = pangolin[pangolin_argmin, pangolin_idx]   # this is a 1d array that should == the difference between loss_ref and loss_alt
+    loss_ref = pangolin_ref[pangolin_argmin, pangolin_idx]   # at each position, select the ref sequence splice probability from the tissue that had the maximum loss score
+    loss_alt = pangolin_alt[pangolin_argmin, pangolin_idx]   # at each position, select the alt sequence splice probability from the tissue that had the maximum loss score
+
+    # basic internal consistency checks
+    if len(loss) != len(loss_alt) or len(loss) != len(loss_ref):
+        raise ValueError(f"len(loss) != len(loss_alt) or len(loss) != len(loss_ref): {len(loss)} != {len(loss_alt)} or {len(loss)} != {len(loss_ref)}")
+    if any(abs(l - (a - r)) > 1e-5 for l, a, r in zip(loss, loss_alt, loss_ref)):
+        raise ValueError("Internal error: loss != loss_alt - loss_ref")
+
+    gain = pangolin[pangolin_argmax, pangolin_idx]   # this is 1d array that should == the difference between gain_ref and gain_alt
+    gain_ref = pangolin_ref[pangolin_argmax, pangolin_idx]
+    gain_alt = pangolin_alt[pangolin_argmax, pangolin_idx]
+    # basic internal consistency checks
+    if len(gain) != len(gain_alt) or len(gain) != len(gain_ref):
+        raise ValueError(f"len(gain) != len(gain_alt) or len(gain) != len(gain_ref): {len(gain)} != {len(gain_alt)} or {len(gain)} != {len(gain_ref)}")
+    if any(abs(g - (a - r)) > 1e-5 for g, a, r in zip(gain, gain_alt, gain_ref)):
+        raise ValueError("Internal error: gain != gain_alt - gain_ref")
+
+    return loss, gain, loss_ref, loss_alt, gain_ref, gain_alt
 
 
 def get_genes(chr, pos, gtf):
@@ -77,12 +115,11 @@ def get_genes(chr, pos, gtf):
         elif gene[6] == '-':
             genes_neg[gene_id] = exons
 
-    return (genes_pos, genes_neg)
+    return genes_pos, genes_neg
 
 
 def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
     d = args.distance
-    cutoff = args.score_cutoff
 
     if len(set("ACGT").intersection(set(ref))) == 0 or len(set("ACGT").intersection(set(alt))) == 0 \
             or (len(ref) != 1 and len(alt) != 1 and len(ref) != len(alt)):
@@ -117,28 +154,30 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
 
     # get genes that intersect variant
     genes_pos, genes_neg = get_genes(chr, pos, gtf)
-    if len(genes_pos)+len(genes_neg)==0:
+    if len(genes_pos) + len(genes_neg) == 0:
         print("[Line %s]" % lnum, "WARNING, skipping variant: Variant not contained in a gene body. Do GTF/FASTA chromosome names match?")
         return -1
 
     # get splice scores
-    loss_pos, gain_pos = None, None
-    if len(genes_pos) > 0:
-        loss_pos, gain_pos = compute_score(ref_seq, alt_seq, '+', d, models)
-    loss_neg, gain_neg = None, None
-    if len(genes_neg) > 0:
-        loss_neg, gain_neg = compute_score(ref_seq, alt_seq, '-', d, models)
+    genomic_coords = np.arange(pos-d, pos+d+1)
 
-    scores = ""
-    for (genes, loss, gain) in \
-            ((genes_pos,loss_pos,gain_pos),(genes_neg,loss_neg,gain_neg)):
+    results = []
+    for genes, strand, strand_aware_genomic_coords in [
+        (genes_pos, "+", genomic_coords),
+        (genes_neg, "-", genomic_coords[::-1])
+    ]:
+        if not genes:
+            continue
+
+        loss, gain, loss_ref, loss_alt, gain_ref, gain_alt = compute_score(ref_seq, alt_seq, strand, d, models)
+
         for gene, positions in genes.items():
             warnings = "Warnings:"
             positions = np.array(positions)
             positions = positions - (pos - d)
 
             if args.mask == "True" and len(positions) != 0:
-                positions_filt = positions[(positions>=0) & (positions<len(loss))]
+                positions_filt = positions[(positions >= 0) & (positions < len(loss))]
                 # set splice gain at annotated sites to 0
                 gain[positions_filt] = np.minimum(gain[positions_filt], 0)
                 # set splice loss at unannotated sites to 0
@@ -149,42 +188,40 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
                 warnings += "NoAnnotatedSitesToMaskForThisGene"
                 loss[:] = np.maximum(loss[:], 0)
 
-            if args.score_exons == "True":
-                scores1 = gene+'_sites1|'
-                scores2 = gene+'_sites2|'
-            
-                for i in range(len(positions)//2):
-                    p1, p2 = positions[2*i], positions[2*i+1]
-                    if p1<0 or p1>=len(loss):
-                        s1 = "NA"
-                    else:
-                        s1 = [loss[p1],gain[p1]]
-                        s1 = round(s1[np.argmax(np.abs(s1))],2)
-                    if p2<0 or p2>=len(loss):
-                        s2 = "NA"
-                    else:
-                        s2 = [loss[p2],gain[p2]]
-                        s2 = round(s2[np.argmax(np.abs(s2))],2)
-                    if s1 == "NA" and s2 == "NA":
-                        continue
-                    scores1 += "%s:%s|" % (p1-d, s1)
-                    scores2 += "%s:%s|" % (p2-d, s2)
-                scores = scores+scores1+scores2
+            if len(genomic_coords) != len(gain):
+                raise ValueError(f"Internal error: len(genomic_coords) != len(gain): {len(genomic_coords)} != {len(gain)}")
+            if len(genomic_coords) != len(loss):
+                raise ValueError(f"Internal error: len(genomic_coords) != len(loss): {len(genomic_coords)} != {len(loss)}")
 
-            elif cutoff != None:
-                scores = scores+gene+'|'
-                l, g = np.where(loss<=-cutoff)[0], np.where(gain>=cutoff)[0]
-                for p, s in zip(np.concatenate([g-d,l-d]), np.concatenate([gain[g],loss[l]])):
-                    scores += "%s:%s|" % (p, round(s,2))
+            l, g = np.argmin(loss), np.argmax(gain)
+            results.append({
+                "NAME": gene,
+                "DS_SG": float(round(gain[g], 3)),  # splice gain delta score at the position where the splice gain delta score is maximum
+                "DS_SL": float(round(loss[l], 3)),  # splice loss delta score at the position where the splice loss delta score is maximum
+                "DP_SG": int(g-d),   # relative position where the splice gain delta score is maximum
+                "DP_SL": int(l-d),   # relative position where the splice loss delta score is maximum
+                "SG_REF": float(round(gain_ref[g], 3)),  # reference sequence splice probability at position and tissue where splice gain is maximum
+                "SG_ALT": float(round(gain_alt[g], 3)),  # alt sequence splice probability at position and tissue where splice gain is maximum
+                "SL_REF": float(round(loss_ref[l], 3)),  # reference sequence splice probability at position and tissue where splice loss is maximum
+                "SL_ALT": float(round(loss_alt[l], 3)),  # alt sequence splice probability at position and tissue where splice loss is maximum
+                "ALL_NON_ZERO_SCORES": [
+                    {
+                        "pos": int(genomic_coord),
+                        "SL_REF": float(loss_ref_score),  # reference sequence splice probability in the tissue where the splice loss delta score is largest at this position
+                        "SL_ALT": float(loss_alt_score),  # alt sequence splice probability in the tissue where the splice loss delta score is largest at this position
+                        "SG_REF": float(gain_ref_score),  # reference sequence splice probability in the tissue where the splice gain delta score is largest at this position
+                        "SG_ALT": float(gain_alt_score),  # alt sequence splice probability in the tissue where the splice gain delta score is largest at this position
+                    } for i, (genomic_coord, loss_ref_score, loss_alt_score, gain_ref_score, gain_alt_score) in enumerate(zip(
+                        strand_aware_genomic_coords, loss_ref, loss_alt, gain_ref, gain_alt)
+                    ) if any(score >= 0.1 for score in (loss_ref_score, loss_alt_score, gain_ref_score, gain_alt_score)) or i in (l, g)
+                ],  # use 0.1 threshold for ALL_NON_ZERO_SCORES because Pangolin's baseline probability seems to be ~0.05 for most positions,
+                    # so the 0.1 threshold separates the unusually large scores
+                "STRAND": strand,
+                "WARNINGS": warnings,
+            })
 
-            else:
-                scores = scores+gene+'|'
-                l, g = np.argmin(loss), np.argmax(gain),
-                scores += "%s:%s|%s:%s|" % (g-d, round(gain[g],2), l-d, round(loss[l],2))
+    return results
 
-            scores += warnings
-
-    return scores.strip('|')
 
 def main():
     parser = argparse.ArgumentParser()
@@ -214,8 +251,8 @@ def main():
         print("Using CPU")
 
     models = []
-    for i in [0,2,4,6]:
-        for j in range(1,4):
+    for i in [0, 2, 4, 6]:
+        for j in range(1, 4):
             model = Pangolin(L, W, AR)
             if torch.cuda.is_available():
                 model.cuda()
