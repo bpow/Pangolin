@@ -159,7 +159,7 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
         return -1
 
     # get splice scores
-    genomic_coords = np.arange(pos-d, pos+d+1)
+    genomic_coords = np.arange(pos-d, pos+d+len(ref))
 
     results = []
     for genes, strand, strand_aware_genomic_coords in [
