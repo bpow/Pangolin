@@ -162,10 +162,7 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
     genomic_coords = np.arange(pos-d, pos+d+len(ref))
 
     results = []
-    for genes, strand, strand_aware_genomic_coords in [
-        (genes_pos, "+", genomic_coords),
-        (genes_neg, "-", genomic_coords[::-1])
-    ]:
+    for genes, strand in [(genes_pos, "+"), (genes_neg, "-")]:
         if not genes:
             continue
 
@@ -212,7 +209,7 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
                         "SG_REF": float(gain_ref_score),  # reference sequence splice probability in the tissue where the splice gain delta score is largest at this position
                         "SG_ALT": float(gain_alt_score),  # alt sequence splice probability in the tissue where the splice gain delta score is largest at this position
                     } for i, (genomic_coord, loss_ref_score, loss_alt_score, gain_ref_score, gain_alt_score) in enumerate(zip(
-                        strand_aware_genomic_coords, loss_ref, loss_alt, gain_ref, gain_alt)
+                        genomic_coords, loss_ref, loss_alt, gain_ref, gain_alt)
                     ) if any(score >= 0.1 for score in (loss_ref_score, loss_alt_score, gain_ref_score, gain_alt_score)) or i in (l, g)
                 ],  # use 0.1 threshold for ALL_NON_ZERO_SCORES because Pangolin's baseline probability seems to be ~0.05 for most positions,
                     # so the 0.1 threshold separates the unusually large scores
