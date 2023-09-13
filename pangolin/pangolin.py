@@ -100,20 +100,20 @@ def compute_score(ref_seq, alt_seq, strand, d, models):
 
 
 def get_genes(chr, pos, gtf):
-    genes = gtf.region((chr, pos-1, pos-1), featuretype="gene")
+    genes = gtf.region((chr, pos-1, pos-1), featuretype="transcript")
     genes_pos, genes_neg = {}, {}
 
     for gene in genes:
         if gene[3] > pos or gene[4] < pos:
             continue
-        gene_id = gene["gene_id"][0]
+        transcript_id = gene["transcript_id"][0]
         exons = []
         for exon in gtf.children(gene, featuretype="exon"):
             exons.extend([exon[3], exon[4]])
         if gene[6] == '+':
-            genes_pos[gene_id] = exons
+            genes_pos[transcript_id] = exons
         elif gene[6] == '-':
-            genes_neg[gene_id] = exons
+            genes_neg[transcript_id] = exons
 
     return genes_pos, genes_neg
 
@@ -168,8 +168,7 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
 
         loss, gain, loss_ref, loss_alt, gain_ref, gain_alt = compute_score(ref_seq, alt_seq, strand, d, models)
 
-        for gene, positions in genes.items():
-            warnings = "Warnings:"
+        for transcript_id, positions in genes.items():
             positions = np.array(positions)
             positions = positions - (pos - d)
 
@@ -182,7 +181,6 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
                 loss[not_positions] = np.maximum(loss[not_positions], 0)
 
             elif args.mask == "True":
-                warnings += "NoAnnotatedSitesToMaskForThisGene"
                 loss[:] = np.maximum(loss[:], 0)
 
             if len(genomic_coords) != len(gain):
@@ -192,7 +190,7 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
 
             l, g = np.argmin(loss), np.argmax(gain)
             results.append({
-                "NAME": gene,
+                "NAME": transcript_id,
                 "DS_SG": float(round(gain[g], 3)),  # splice gain delta score at the position where the splice gain delta score is maximum
                 "DS_SL": float(round(loss[l], 3)),  # splice loss delta score at the position where the splice loss delta score is maximum
                 "DP_SG": int(g-d),   # relative position where the splice gain delta score is maximum
@@ -214,13 +212,17 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
                 ],  # use 0.1 threshold for ALL_NON_ZERO_SCORES because Pangolin's baseline probability seems to be ~0.05 for most positions,
                     # so the 0.1 threshold separates the unusually large scores
                 "STRAND": strand,
-                "WARNINGS": warnings,
             })
 
     return results
 
 
 def main():
+    raise Exception(
+        "Output to VCF or CSV formats has not been implemented for the new process_variant(..) API return format. "
+        "Please call process_variant(..) directly to retrieve scores programatically, or submit a PR to fix VCF and/or CSV output.")
+
+
     parser = argparse.ArgumentParser()
     parser.add_argument("variant_file", help="VCF or CSV file with a header (see COLUMN_IDS option).")
     parser.add_argument("reference_file", help="FASTA file containing a reference genome sequence.")
@@ -294,7 +296,7 @@ def main():
             chr, pos, ref, alt = variant[col_ids]
             ref, alt = ref.upper(), alt.upper()
             scores = process_variant(lnum+1, str(chr), int(pos), ref, alt, gtf, models, args)
-            if scores == -1:
+            if not scores:
                 fout.write(','.join(variant.to_csv(header=False, index=False).split('\n'))+'\n')
             else:
                 fout.write(','.join(variant.to_csv(header=False, index=False).split('\n'))+scores+'\n')
