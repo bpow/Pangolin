@@ -5,8 +5,13 @@ import vcf
 import gffutils
 import pandas as pd
 import pyfastx
-# import time
-# startTime = time.time()
+
+
+DECIMAL_PLACES = 2
+
+# use a 0.1 threshold for ALL_NON_ZERO_SCORES because Pangolin's baseline probability seems to be ~0.05 for most
+# positions, so 0.1 separates the unusually large scores
+MIN_SCORE_THRESHOLD = 0.1
 
 IN_MAP = np.asarray([[0, 0, 0, 0],
                      [1, 0, 0, 0],
@@ -191,26 +196,26 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
             l, g = np.argmin(loss), np.argmax(gain)
             results.append({
                 "NAME": transcript_id,
-                "DS_SG": float(round(gain[g], 3)),  # splice gain delta score at the position where the splice gain delta score is maximum
-                "DS_SL": float(round(loss[l], 3)),  # splice loss delta score at the position where the splice loss delta score is maximum
+                "DS_SG": float(round(gain[g], DECIMAL_PLACES)),  # splice gain delta score at the position where the splice gain delta score is maximum
+                "DS_SL": float(round(loss[l], DECIMAL_PLACES)),  # splice loss delta score at the position where the splice loss delta score is maximum
                 "DP_SG": int(g-d),   # relative position where the splice gain delta score is maximum
                 "DP_SL": int(l-d),   # relative position where the splice loss delta score is maximum
-                "SG_REF": float(round(gain_ref[g], 3)),  # reference sequence splice probability at position and tissue where splice gain is maximum
-                "SG_ALT": float(round(gain_alt[g], 3)),  # alt sequence splice probability at position and tissue where splice gain is maximum
-                "SL_REF": float(round(loss_ref[l], 3)),  # reference sequence splice probability at position and tissue where splice loss is maximum
-                "SL_ALT": float(round(loss_alt[l], 3)),  # alt sequence splice probability at position and tissue where splice loss is maximum
+                "SG_REF": float(round(gain_ref[g], DECIMAL_PLACES)),  # reference sequence splice probability at position and tissue where splice gain is maximum
+                "SG_ALT": float(round(gain_alt[g], DECIMAL_PLACES)),  # alt sequence splice probability at position and tissue where splice gain is maximum
+                "SL_REF": float(round(loss_ref[l], DECIMAL_PLACES)),  # reference sequence splice probability at position and tissue where splice loss is maximum
+                "SL_ALT": float(round(loss_alt[l], DECIMAL_PLACES)),  # alt sequence splice probability at position and tissue where splice loss is maximum
                 "ALL_NON_ZERO_SCORES": [
                     {
                         "pos": int(genomic_coord),
-                        "SL_REF": float(loss_ref_score),  # reference sequence splice probability in the tissue where the splice loss delta score is largest at this position
-                        "SL_ALT": float(loss_alt_score),  # alt sequence splice probability in the tissue where the splice loss delta score is largest at this position
-                        "SG_REF": float(gain_ref_score),  # reference sequence splice probability in the tissue where the splice gain delta score is largest at this position
-                        "SG_ALT": float(gain_alt_score),  # alt sequence splice probability in the tissue where the splice gain delta score is largest at this position
+                        "SL_REF": float(round(loss_ref_score, DECIMAL_PLACES)),  # reference sequence splice probability in the tissue where the splice loss delta score is largest at this position
+                        "SL_ALT": float(round(loss_alt_score, DECIMAL_PLACES)),  # alt sequence splice probability in the tissue where the splice loss delta score is largest at this position
+                        "SG_REF": float(round(gain_ref_score, DECIMAL_PLACES)),  # reference sequence splice probability in the tissue where the splice gain delta score is largest at this position
+                        "SG_ALT": float(round(gain_alt_score, DECIMAL_PLACES)),  # alt sequence splice probability in the tissue where the splice gain delta score is largest at this position
                     } for i, (genomic_coord, loss_ref_score, loss_alt_score, gain_ref_score, gain_alt_score) in enumerate(zip(
                         genomic_coords, loss_ref, loss_alt, gain_ref, gain_alt)
-                    ) if any(score >= 0.1 for score in (loss_ref_score, loss_alt_score, gain_ref_score, gain_alt_score)) or i in (l, g)
-                ],  # use 0.1 threshold for ALL_NON_ZERO_SCORES because Pangolin's baseline probability seems to be ~0.05 for most positions,
-                    # so the 0.1 threshold separates the unusually large scores
+                    ) if any(score >= MIN_SCORE_THRESHOLD for score in (
+                        loss_ref_score, loss_alt_score, gain_ref_score, gain_alt_score)) or i in (l, g)
+                ],
                 "STRAND": strand,
             })
 
@@ -307,8 +312,6 @@ def main():
     else:
         print("ERROR, variant_file needs to be a CSV or VCF.")
 
-    # executionTime = (time.time() - startTime)
-    # print('Execution time in seconds: ' + str(executionTime))
 
 if __name__ == '__main__':
     main()
