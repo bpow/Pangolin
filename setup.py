@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setuptools.setup(
     name="pangolin",
-    version="1.0.2",
+    version="1.0.3",
     author="Tony Zeng",
     author_email="tkyzeng@gmail.com",
     description="Pangolin",
