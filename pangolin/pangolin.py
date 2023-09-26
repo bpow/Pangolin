@@ -171,22 +171,30 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
         if not genes:
             continue
 
-        loss, gain, loss_ref, loss_alt, gain_ref, gain_alt = compute_score(ref_seq, alt_seq, strand, d, models)
+        orig_loss, orig_gain, loss_ref, loss_alt, gain_ref, gain_alt = compute_score(ref_seq, alt_seq, strand, d, models)
 
         for transcript_id, positions in genes.items():
             positions = np.array(positions)
             positions = positions - (pos - d)
 
-            if args.mask == "True" and len(positions) != 0:
-                positions_filt = positions[(positions >= 0) & (positions < len(loss))]
-                # set splice gain at annotated sites to 0
-                gain[positions_filt] = np.minimum(gain[positions_filt], 0)
-                # set splice loss at unannotated sites to 0
-                not_positions = ~np.isin(np.arange(len(loss)), positions_filt)
-                loss[not_positions] = np.maximum(loss[not_positions], 0)
+            if args.mask != "True":
+                loss = orig_loss
+                gain = orig_gain
+            else:
+                # Make copies of the loss/gain for each gene to avoid overwriting data between genes
+                loss = np.copy(orig_loss)
+                gain = np.copy(orig_gain)
 
-            elif args.mask == "True":
-                loss[:] = np.maximum(loss[:], 0)
+                if len(positions) != 0:
+                    positions_filt = positions[(positions >= 0) & (positions < len(loss))]
+                    # set splice gain at annotated sites to 0
+                    gain[positions_filt] = np.minimum(gain[positions_filt], 0)
+                    # set splice loss at unannotated sites to 0
+                    not_positions = ~np.isin(np.arange(len(loss)), positions_filt)
+                    loss[not_positions] = np.maximum(loss[not_positions], 0)
+
+                else:
+                    loss[:] = np.maximum(loss[:], 0)
 
             if len(genomic_coords) != len(gain):
                 raise ValueError(f"Internal error: len(genomic_coords) != len(gain): {len(genomic_coords)} != {len(gain)}")
