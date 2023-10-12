@@ -129,10 +129,10 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
     if len(set("ACGT").intersection(set(ref))) == 0 or len(set("ACGT").intersection(set(alt))) == 0 \
             or (len(ref) != 1 and len(alt) != 1 and len(ref) != len(alt)):
         print("[Line %s]" % lnum, "WARNING, skipping variant: Variant format not supported.")
-        return -1
+        return None
     elif len(ref) > 2*d:
         print("[Line %s]" % lnum, "WARNING, skipping variant: Deletion too large")
-        return -1
+        return None
 
     fasta = pyfastx.Fasta(args.reference_file)
     # try to make vcf chromosomes compatible with reference chromosomes
@@ -147,12 +147,12 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
         print(e)
         print("[Line %s]" % lnum, "WARNING, skipping variant: Could not get sequence, possibly because the variant is too close to chromosome ends. "
                                   "See error message above.")
-        return -1    
+        return None
 
     if seq[5000+d:5000+d+len(ref)] != ref:
         print("[Line %s]" % lnum, "WARNING, skipping variant: Mismatch between FASTA (ref base: %s) and variant file (ref base: %s)."
               % (seq[5000+d:5000+d+len(ref)], ref))
-        return -1
+        return None
 
     ref_seq = seq
     alt_seq = seq[:5000+d] + alt + seq[5000+d+len(ref):]
@@ -161,7 +161,7 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
     genes_pos, genes_neg = get_genes(chr, pos, gtf)
     if len(genes_pos) + len(genes_neg) == 0:
         print("[Line %s]" % lnum, "WARNING, skipping variant: Variant not contained in a gene body. Do GTF/FASTA chromosome names match?")
-        return -1
+        return None
 
     # get splice scores
     genomic_coords = np.arange(pos-d, pos+d+len(ref))
