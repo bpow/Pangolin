@@ -1,11 +1,13 @@
 import argparse
 from pkg_resources import resource_filename
-from pangolin.model import *
-import vcf
 import gffutils
+import numpy as np
 import pandas as pd
 import pyfastx
+import torch
+import vcf
 
+from pangolin.model import L, W, AR, Pangolin
 
 FLOAT_FORMAT = "0.2f"
 
