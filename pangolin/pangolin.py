@@ -230,11 +230,13 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
     return results
 
 
-def main():
-    raise Exception(
-        "Output to VCF or CSV formats has not been implemented for the new process_variant(..) API return format. "
-        "Please call process_variant(..) directly to retrieve scores programatically, or submit a PR to fix VCF and/or CSV output.")
+def convert_scores_to_string(scores):
+    return ",".join([
+        "|".join([s["NAME"], f"{s['DP_SG']}:{s['DS_SG']}", f"{s['DP_SL']}:{s['DS_SL']}"]) for s in scores
+    ])
 
+
+def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("variant_file", help="VCF or CSV file with a header (see COLUMN_IDS option).")
@@ -291,8 +293,8 @@ def main():
 
         for i, variant in enumerate(variants):
             scores = process_variant(lnum+i, str(variant.CHROM), int(variant.POS), variant.REF, str(variant.ALT[0]), gtf, models, args)
-            if scores != -1:
-                variant.INFO["Pangolin"] = scores
+            if scores:
+                variant.INFO["Pangolin"] = convert_scores_to_string(scores)
             fout.write_record(variant)
             fout.flush()
 
@@ -309,10 +311,11 @@ def main():
             chr, pos, ref, alt = variant[col_ids]
             ref, alt = ref.upper(), alt.upper()
             scores = process_variant(lnum+1, str(chr), int(pos), ref, alt, gtf, models, args)
+
             if not scores:
                 fout.write(','.join(variant.to_csv(header=False, index=False).split('\n'))+'\n')
             else:
-                fout.write(','.join(variant.to_csv(header=False, index=False).split('\n'))+scores+'\n')
+                fout.write(','.join(variant.to_csv(header=False, index=False).split('\n'))+convert_scores_to_string(scores)+'\n')
             fout.flush()
 
         fout.close()
