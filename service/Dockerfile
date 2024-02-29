@@ -14,6 +14,8 @@ RUN apt update && apt-get install --no-install-recommends -y \
 
 RUN python3 -m pip install torch==2.2.1+cpu -f https://download.pytorch.org/whl/torch_stable.html
 
+RUN apt update && apt-get install --no-install-recommends -y build-essential libpq-dev
+
 COPY requirements.txt /
 RUN python3 -m pip install setuptools==57.5.0 \
     && python3 -m pip install pyvcf>=0.6.8 \

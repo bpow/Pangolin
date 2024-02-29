@@ -7,14 +7,12 @@ import re
 import traceback
 import time
 
-# record timing
-start_time = time.time()
-
-# pangolin imports
 from pkg_resources import resource_filename
 from pangolin.model import torch, Pangolin, L, W, AR
 from pangolin.pangolin import process_variant as process_variant_using_pangolin
 import gffutils
+
+import psycopg2
 
 # flask imports
 from flask import Flask, request, Response, send_from_directory
@@ -45,28 +43,7 @@ PANGOLIN_DEFAULT_MASK = 0        # mask scores representing annotated acceptor/d
 PANGOLIN_EXAMPLE = f"/pangolin/?hg=38&distance=500&mask=0&variant=chr8-140300615-C-G"
 
 
-TIMES = {
-    "imports": time.time() - start_time,
-}
-current_time = time.time()
-
-
 PANGOLIN_MODELS = []
-for i in 0, 2, 4, 6:
-    for j in 1, 2, 3:
-        model = Pangolin(L, W, AR)
-        if torch.cuda.is_available():
-            model.cuda()
-            weights = torch.load(resource_filename("pangolin", "models/final.%s.%s.3.v2" % (j, i)))
-        else:
-            weights = torch.load(resource_filename("pangolin", "models/final.%s.%s.3.v2" % (j, i)), map_location=torch.device('cpu'))
-        model.load_state_dict(weights)
-        model.eval()
-        PANGOLIN_MODELS.append(model)
-
-TIMES["loading_pangolin_models"] = time.time() - current_time
-current_time = time.time()
-
 TRANSCRIPT_ANNOTATIONS = {}
 
 VARIANT_RE = re.compile(
@@ -78,6 +55,26 @@ VARIANT_RE = re.compile(
     "[-\s:>]+"
     "(?P<alt>[ACGT]+)"
 )
+
+
+def init_pangolin():
+    if PANGOLIN_MODELS:
+        return
+
+    torch.set_num_threads(os.cpu_count()*2)
+
+
+    for i in 0, 2, 4, 6:
+        for j in 1, 2, 3:
+            model = Pangolin(L, W, AR)
+            if torch.cuda.is_available():
+                model.cuda()
+                weights = torch.load(resource_filename("pangolin", "models/final.%s.%s.3.v2" % (j, i)))
+            else:
+                weights = torch.load(resource_filename("pangolin", "models/final.%s.%s.3.v2" % (j, i)), map_location=torch.device('cpu'))
+            model.load_state_dict(weights)
+            model.eval()
+            PANGOLIN_MODELS.append(model)
 
 
 def error_response(error_message, source="Pangolin"):
@@ -93,6 +90,86 @@ def parse_variant(variant_str):
         raise ValueError(f"Unable to parse variant: {variant_str}")
 
     return match['chrom'], int(match['pos']), match['ref'], match['alt']
+
+
+DATABASE_CONNECTION = None
+def init_database_connection():
+    global DATABASE_CONNECTION
+    try:
+        DATABASE_CONNECTION = psycopg2.connect(
+            host="/cloudsql/spliceai-lookup-412920:us-central1:spliceai-lookup-db",
+            database="spliceai-lookup-db",
+            user="postgres",
+            password=os.environ.get("DB_PASSWORD"))
+        DATABASE_CONNECTION.autocommit = True
+    except Exception as e:
+        print(f"ERROR: Unable to connect to the database: {e}")
+        traceback.print_exc()
+        return
+
+    def does_table_exist(table_name):
+        results = run_sql(f"SELECT EXISTS (SELECT 1 AS result FROM pg_tables WHERE tablename = '{table_name}');")
+        does_table_already_exist = results[0][0]
+        return does_table_already_exist
+
+    if not does_table_exist("cache"):
+        print("Creating cache table")
+        run_sql("""CREATE TABLE cache (key TEXT UNIQUE, value TEXT, counter INT, accessed TIMESTAMP DEFAULT now())""")
+        run_sql("""CREATE INDEX cache_index ON cache (key)""")
+
+    if not does_table_exist("log"):
+        print("Creating event_log table")
+        run_sql("""CREATE TABLE log (event_name TEXT, ip TEXT, logtime TIMESTAMP DEFAULT now(), duration REAL, variant TEXT, genome VARCHAR(10), distance INT, mask INT4, details TEXT)""")
+        run_sql("""CREATE INDEX log_index1 ON log (event_name)""")
+        run_sql("""CREATE INDEX log_index2 ON log (ip)""")
+
+
+def run_sql(sql_query, *args):
+    with DATABASE_CONNECTION:
+        c = DATABASE_CONNECTION.cursor()
+        c.execute(sql_query, *args)
+        try:
+            results = c.fetchall()
+        except:
+            results = []
+        c.close()
+    return results
+
+
+def get_splicing_scores_cache_key(variant, genome_version, distance, mask):
+    return f"pangolin__{variant}__hg{genome_version}__d{distance}__m{mask}"
+
+
+def get_splicing_scores_from_cache(variant, genome_version, distance, mask):
+    if DATABASE_CONNECTION is None:
+        return
+
+    key = get_splicing_scores_cache_key(variant, genome_version, distance, mask)
+    results = None
+    try:
+        rows = run_sql(f"SELECT value FROM cache WHERE key = '{key}'")
+        if rows:
+            results = json.loads(rows[0][0])
+            results["source"] += ":cache"
+    except Exception as e:
+        print(f"Cache error: {e}", flush=True)
+
+    return results
+
+
+def add_splicing_scores_to_cache(variant, genome_version, distance, mask, results):
+    if DATABASE_CONNECTION is None:
+        return
+
+    key = get_splicing_scores_cache_key(variant, genome_version, distance, mask)
+    try:
+        results_string = json.dumps(results)
+
+        run_sql(r"""INSERT INTO cache (key, value, counter, accessed) VALUES (%s, %s, 1, now()) """ +
+                r"""ON CONFLICT (key) DO """ +
+                r"""UPDATE SET key=%s, value=%s, counter=cache.counter+1, accessed=now()""", (key, results_string, key, results_string))
+    except Exception as e:
+        print(f"Cache error: {e}", flush=True)
 
 
 def get_pangolin_scores(variant, genome_version, distance_param, mask_param):
@@ -203,12 +280,6 @@ def run_pangolin():
     start_time = datetime.now()
     logging_prefix = start_time.strftime("%m/%d/%Y %H:%M:%S") + f" t{os.getpid()}"
 
-    global current_time
-    TIMES["staring_handler"] = time.time() - current_time
-    current_time = time.time()
-
-    torch.set_num_threads(os.cpu_count()*2)
-
     # check params
     params = {}
     if request.values:
@@ -249,31 +320,76 @@ def run_pangolin():
     print(f"{logging_prefix}: {request.remote_addr}: {variant} processing with hg={genome_version}, "
           f"distance={distance_param}, mask={mask_param}", flush=True)
 
-    pangolin_mask_param = "True" if mask_param == "1" else "False"
-    results = get_pangolin_scores(variant, genome_version, distance_param, pangolin_mask_param)
-    #try:
-    #    pangolin_mask_param = "True" if mask_param == "1" else "False"
-    #    results = get_pangolin_scores(variant, genome_version, distance_param, pangolin_mask_param)
-    #except Exception as e:
-    #    traceback.print_exc()
-    #    return error_response(f"ERROR: {e}")
+    init_database_connection()
+    init_pangolin()
+
+    # check cache before processing the variant
+    results = get_splicing_scores_from_cache(variant, genome_version, distance_param, mask_param)
+    duration = (datetime.now() - start_time).total_seconds()
+    if results:
+        log("pangolin:from-cache", ip=get_user_ip(request), variant=variant, genome=genome_version, distance=distance_param, mask=mask_param)
+    else:
+        pangolin_mask_param = "True" if mask_param == "1" else "False"
+        results = get_pangolin_scores(variant, genome_version, distance_param, pangolin_mask_param)
+
+        duration = (datetime.now() - start_time).total_seconds()
+        log("pangolin:computed", ip=get_user_ip(request), duration=duration, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param)
+
+        if "error" not in results:
+            add_splicing_scores_to_cache(variant, genome_version, distance_param, mask_param, results)
+
+    if "error" in results:
+        log("pangolin:error", ip=get_user_ip(request), variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, details=results["error"])
 
     response_json = {}
     response_json.update(params)  # copy input params to output
     response_json.update(results)
 
-    duration = str(datetime.now() - start_time)
-    response_json['duration'] = duration
-
-    print(f"{logging_prefix}: {request.remote_addr}: {variant} took {duration}", flush=True)
-
-    TIMES["total_handler_time"] = time.time() - current_time
-    current_time = time.time()
-    for k, v in TIMES.items():
-        print(f"{logging_prefix}: {request.remote_addr}: {k} took {v:.2f} sec", flush=True)
+    print(f"{logging_prefix}: {request.remote_addr}: {variant} took {str(datetime.now() - start_time)}", flush=True)
 
     return Response(json.dumps(response_json), status=200, mimetype='application/json')
 
+
+def log(event_name, ip=None, duration=None, variant=None, genome=None, distance=None, mask=None, details=None):
+    """Utility method for logging an event"""
+
+    try:
+        if duration is not None: duration = float(duration)
+        if distance is not None: distance = int(distance)
+        if mask is not None: mask = int(mask)
+    except Exception as e:
+        print(f"Error parsing log params: {e}", flush=True)
+        return
+
+    try:
+        run_sql(r"INSERT INTO log (event_name, ip, duration, variant, genome, distance, mask, details) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (event_name, ip, duration, variant, genome, distance, mask, details))
+    except Exception as e:
+        print(f"Log error: {e}", flush=True)
+
+def get_user_ip(request):
+    return request.environ.get("HTTP_X_FORWARDED_FOR")
+
+@app.route('/log/<string:name>/', strict_slashes=False)
+def log_event(name):
+    if DATABASE_CONNECTION is None:
+        message = f"Log error: Database not available"
+        print(message, flush=True)
+        return message
+
+    if name != "show_igv":
+        message = f"Log error: invalid event name: {name}"
+        print(message, flush=True)
+        return message
+
+    details = request.values.get("details")
+    if details:
+        details = str(details)
+        details = details[:2000]
+
+    log(name, ip=get_user_ip(request), details=details)
+
+    return "Done"
 
 @app.route('/', strict_slashes=False, defaults={'path': ''})
 @app.route('/<path:path>/')

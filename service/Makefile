@@ -1,3 +1,6 @@
+include .env
+export
+
 SERVICE=pangolin
 TAG = us-central1-docker.pkg.dev/spliceai-lookup-412920/docker/pangolin:latest
 GCLOUD_PROJECT=spliceai-lookup-412920
@@ -14,15 +17,17 @@ update_sha:
 	docker pull $(TAG) 2>&1 | grep Digest | cut -c 9- > sha256.txt
 
 deploy: build push
+
 	gcloud --project $(GCLOUD_PROJECT) beta run deploy $(SERVICE) \
 		--image $(TAG) \
-		--concurrency 4 \
+		--concurrency 5 \
 		--execution-environment gen2 \
 		--region us-central1 \
+		--set-env-vars "DB_PASSWORD=${SPLICEAI_LOOKUP_DB_PASSWORD}" \
 		--add-volume=name=ref,type=cloud-storage,bucket=spliceai-lookup-reference-data,readonly=true \
 		--add-volume-mount=volume=ref,mount-path=/ref \
 		--allow-unauthenticated \
-		--memory 4Gi \
+		--memory 8Gi \
 		--cpu 4
 
 test: build
