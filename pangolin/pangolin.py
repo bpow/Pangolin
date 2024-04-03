@@ -6,14 +6,12 @@ if sys.version_info >= (3, 9):
     import importlib.resources as importlib_resources
 else:
     import importlib_resources
-from pangolin.model import *
+from pangolin.model import L, W, AR, Pangolin
 import gffutils
 import numpy as np
 import pyfastx
 import torch
-import vcf
-
-from pangolin.model import L, W, AR, Pangolin
+import pysam
 
 FLOAT_FORMAT = "0.2f"
 
@@ -58,8 +56,8 @@ def compute_score(ref_seq, alt_seq, strand, d, models):
         score_alt = []
         for model in models[3*j: 3*j+3]:
             with torch.no_grad():
-                ref = model(ref_seq)[0][[1,4,7,10][j],:].cpu().numpy()
-                alt = model(alt_seq)[0][[1,4,7,10][j],:].cpu().numpy()
+                ref = model(ref_seq)[0][[1, 4, 7, 10][j], :].cpu().numpy()
+                alt = model(alt_seq)[0][[1, 4, 7, 10][j], :].cpu().numpy()
                 if strand == '-':
                     ref = ref[::-1]
                     alt = alt[::-1]
@@ -67,9 +65,11 @@ def compute_score(ref_seq, alt_seq, strand, d, models):
                 l = 2*d+1
                 ndiff = np.abs(len(ref)-len(alt))
                 if len(ref) > len(alt):
-                    alt = np.concatenate([alt[0:l//2+1], np.zeros(ndiff), alt[l//2+1:]])
+                    alt = np.concatenate(
+                        [alt[0:l//2+1], np.zeros(ndiff), alt[l//2+1:]])
                 elif len(ref) < len(alt):
-                    alt = np.concatenate([alt[0:l//2], np.max(alt[l//2:l//2+ndiff+1], keepdims=True), alt[l//2+ndiff+1:]])
+                    alt = np.concatenate(
+                        [alt[0:l//2], np.max(alt[l//2:l//2+ndiff+1], keepdims=True), alt[l//2+ndiff+1:]])
 
                 score.append(alt - ref)
                 score_ref.append(ref)
@@ -90,17 +90,22 @@ def compute_score(ref_seq, alt_seq, strand, d, models):
     # the ref and alt probabilities for the gain scores can be from a different tissue than the splice loss probablities.
     # Therefore, we need to keep the ref and alt probabilities that underlie the gain score, and, separately, also the
     # ref and alt probabilities that underlie the loss score.
-    loss = pangolin[pangolin_argmin, pangolin_idx]   # this is a 1d array that should == the difference between loss_ref and loss_alt
-    loss_ref = pangolin_ref[pangolin_argmin, pangolin_idx]   # at each position, select the ref sequence splice probability from the tissue that had the maximum loss score
-    loss_alt = pangolin_alt[pangolin_argmin, pangolin_idx]   # at each position, select the alt sequence splice probability from the tissue that had the maximum loss score
+    # this is a 1d array that should == the difference between loss_ref and loss_alt
+    loss = pangolin[pangolin_argmin, pangolin_idx]
+    # at each position, select the ref sequence splice probability from the tissue that had the maximum loss score
+    loss_ref = pangolin_ref[pangolin_argmin, pangolin_idx]
+    # at each position, select the alt sequence splice probability from the tissue that had the maximum loss score
+    loss_alt = pangolin_alt[pangolin_argmin, pangolin_idx]
 
     # basic internal consistency checks
     if len(loss) != len(loss_alt) or len(loss) != len(loss_ref):
-        raise ValueError(f"len(loss) != len(loss_alt) or len(loss) != len(loss_ref): {len(loss)} != {len(loss_alt)} or {len(loss)} != {len(loss_ref)}")
+        raise ValueError(f"len(loss) != len(loss_alt) or len(loss) != len(loss_ref): {
+                         len(loss)} != {len(loss_alt)} or {len(loss)} != {len(loss_ref)}")
     if any(abs(l - (a - r)) > 1e-5 for l, a, r in zip(loss, loss_alt, loss_ref)):
         raise ValueError("Internal error: loss != loss_alt - loss_ref")
 
-    gain = pangolin[pangolin_argmax, pangolin_idx]   # this is 1d array that should == the difference between gain_ref and gain_alt
+    # this is 1d array that should == the difference between gain_ref and gain_alt
+    gain = pangolin[pangolin_argmax, pangolin_idx]
     gain_ref = pangolin_ref[pangolin_argmax, pangolin_idx]
     gain_alt = pangolin_alt[pangolin_argmax, pangolin_idx]
     # basic internal consistency checks
@@ -136,10 +141,12 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
 
     if len(set("ACGT").intersection(set(ref))) == 0 or len(set("ACGT").intersection(set(alt))) == 0 \
             or (len(ref) != 1 and len(alt) != 1 and len(ref) != len(alt)):
-        print("[Line %s]" % lnum, "WARNING, skipping variant: Variant format not supported.")
+        print("[Line %s]" %
+              lnum, "WARNING, skipping variant: Variant format not supported.")
         return None
     elif len(ref) > 2*d:
-        print("[Line %s]" % lnum, "WARNING, skipping variant: Deletion too large")
+        print("[Line %s]" %
+              lnum, "WARNING, skipping variant: Deletion too large")
         return None
 
     fasta = pyfastx.Fasta(args.reference_file)
@@ -179,7 +186,8 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
         if not genes:
             continue
 
-        orig_loss, orig_gain, loss_ref, loss_alt, gain_ref, gain_alt = compute_score(ref_seq, alt_seq, strand, d, models)
+        orig_loss, orig_gain, loss_ref, loss_alt, gain_ref, gain_alt = compute_score(
+            ref_seq, alt_seq, strand, d, models)
 
         for transcript_id, positions in genes.items():
             positions = np.array(positions)
@@ -194,39 +202,55 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
                 gain = np.copy(orig_gain)
 
                 if len(positions) != 0:
-                    positions_filt = positions[(positions >= 0) & (positions < len(loss))]
+                    positions_filt = positions[(
+                        positions >= 0) & (positions < len(loss))]
                     # set splice gain at annotated sites to 0
                     gain[positions_filt] = np.minimum(gain[positions_filt], 0)
                     # set splice loss at unannotated sites to 0
-                    not_positions = ~np.isin(np.arange(len(loss)), positions_filt)
+                    not_positions = ~np.isin(
+                        np.arange(len(loss)), positions_filt)
                     loss[not_positions] = np.maximum(loss[not_positions], 0)
 
                 else:
                     loss[:] = np.maximum(loss[:], 0)
 
             if len(genomic_coords) != len(gain):
-                raise ValueError(f"Internal error: len(genomic_coords) != len(gain): {len(genomic_coords)} != {len(gain)}")
+                raise ValueError(f"Internal error: len(genomic_coords) != len(gain): {
+                                 len(genomic_coords)} != {len(gain)}")
             if len(genomic_coords) != len(loss):
-                raise ValueError(f"Internal error: len(genomic_coords) != len(loss): {len(genomic_coords)} != {len(loss)}")
+                raise ValueError(f"Internal error: len(genomic_coords) != len(loss): {
+                                 len(genomic_coords)} != {len(loss)}")
 
             l, g = np.argmin(loss), np.argmax(gain)
             results.append({
                 "NAME": transcript_id,
-                "DS_SG": f"{gain[g]:{FLOAT_FORMAT}}",  # splice gain delta score at the position where the splice gain delta score is maximum
-                "DS_SL": f"{loss[l]:{FLOAT_FORMAT}}",  # splice loss delta score at the position where the splice loss delta score is maximum
-                "DP_SG": int(g-d),   # relative position where the splice gain delta score is maximum
-                "DP_SL": int(l-d),   # relative position where the splice loss delta score is maximum
-                "SG_REF": f"{gain_ref[g]:{FLOAT_FORMAT}}",  # reference sequence splice probability at position and tissue where splice gain is maximum
-                "SG_ALT": f"{gain_alt[g]:{FLOAT_FORMAT}}",  # alt sequence splice probability at position and tissue where splice gain is maximum
-                "SL_REF": f"{loss_ref[l]:{FLOAT_FORMAT}}",  # reference sequence splice probability at position and tissue where splice loss is maximum
-                "SL_ALT": f"{loss_alt[l]:{FLOAT_FORMAT}}",  # alt sequence splice probability at position and tissue where splice loss is maximum
+                # splice gain delta score at the position where the splice gain delta score is maximum
+                "DS_SG": f"{gain[g]:{FLOAT_FORMAT}}",
+                # splice loss delta score at the position where the splice loss delta score is maximum
+                "DS_SL": f"{loss[l]:{FLOAT_FORMAT}}",
+                # relative position where the splice gain delta score is maximum
+                "DP_SG": int(g-d),
+                # relative position where the splice loss delta score is maximum
+                "DP_SL": int(l-d),
+                # reference sequence splice probability at position and tissue where splice gain is maximum
+                "SG_REF": f"{gain_ref[g]:{FLOAT_FORMAT}}",
+                # alt sequence splice probability at position and tissue where splice gain is maximum
+                "SG_ALT": f"{gain_alt[g]:{FLOAT_FORMAT}}",
+                # reference sequence splice probability at position and tissue where splice loss is maximum
+                "SL_REF": f"{loss_ref[l]:{FLOAT_FORMAT}}",
+                # alt sequence splice probability at position and tissue where splice loss is maximum
+                "SL_ALT": f"{loss_alt[l]:{FLOAT_FORMAT}}",
                 "ALL_NON_ZERO_SCORES": [
                     {
                         "pos": int(genomic_coord),
-                        "SL_REF": f"{loss_ref_score:{FLOAT_FORMAT}}",  # reference sequence splice probability in the tissue where the splice loss delta score is largest at this position
-                        "SL_ALT": f"{loss_alt_score:{FLOAT_FORMAT}}",  # alt sequence splice probability in the tissue where the splice loss delta score is largest at this position
-                        "SG_REF": f"{gain_ref_score:{FLOAT_FORMAT}}",  # reference sequence splice probability in the tissue where the splice gain delta score is largest at this position
-                        "SG_ALT": f"{gain_alt_score:{FLOAT_FORMAT}}",  # alt sequence splice probability in the tissue where the splice gain delta score is largest at this position
+                        # reference sequence splice probability in the tissue where the splice loss delta score is largest at this position
+                        "SL_REF": f"{loss_ref_score:{FLOAT_FORMAT}}",
+                        # alt sequence splice probability in the tissue where the splice loss delta score is largest at this position
+                        "SL_ALT": f"{loss_alt_score:{FLOAT_FORMAT}}",
+                        # reference sequence splice probability in the tissue where the splice gain delta score is largest at this position
+                        "SG_REF": f"{gain_ref_score:{FLOAT_FORMAT}}",
+                        # alt sequence splice probability in the tissue where the splice gain delta score is largest at this position
+                        "SG_ALT": f"{gain_alt_score:{FLOAT_FORMAT}}",
                     } for i, (genomic_coord, loss_ref_score, loss_alt_score, gain_ref_score, gain_alt_score) in enumerate(zip(
                         genomic_coords, loss_ref, loss_alt, gain_ref, gain_alt)
                     ) if any(score >= MIN_SCORE_THRESHOLD for score in (
@@ -247,16 +271,24 @@ def convert_scores_to_string(scores):
 def main():
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("variant_file", help="VCF or CSV file with a header (see COLUMN_IDS option).")
-    parser.add_argument("reference_file", help="FASTA file containing a reference genome sequence.")
-    parser.add_argument("annotation_file", help="gffutils database file. Can be generated using create_db.py.")
-    parser.add_argument("output_file", help="Prefix for output file. Will be a VCF/CSV if variant_file is VCF/CSV.")
+    parser.add_argument(
+        "variant_file", help="VCF or CSV file with a header (see COLUMN_IDS option).")
+    parser.add_argument(
+        "reference_file", help="FASTA file containing a reference genome sequence.")
+    parser.add_argument(
+        "annotation_file", help="gffutils database file. Can be generated using create_db.py.")
+    parser.add_argument(
+        "output_file", help="Prefix for output file. Will be a VCF/CSV if variant_file is VCF/CSV.")
     parser.add_argument("-c", "--column_ids", default="CHROM,POS,REF,ALT", help="(If variant_file is a CSV) Column IDs for: chromosome, variant position, reference bases, and alternative bases. "
                                                                                 "Separate IDs by commas. (Default: CHROM,POS,REF,ALT)")
-    parser.add_argument("-m", "--mask", default="True", choices=["False","True"], help="If True, splice gains (increases in score) at annotated splice sites and splice losses (decreases in score) at unannotated splice sites will be set to 0. (Default: True)")
-    parser.add_argument("-s", "--score_cutoff", type=float, help="Output all sites with absolute predicted change in score >= cutoff, instead of only the maximum loss/gain sites.")
-    parser.add_argument("-d", "--distance", type=int, default=50, help="Number of bases on either side of the variant for which splice scores should be calculated. (Default: 50)")
-    parser.add_argument("--score_exons", default="False", choices=["False","True"], help="Output changes in score for both splice sites of annotated exons, as long as one splice site is within the considered range (specified by -d). Output will be: gene|site1_pos:score|site2_pos:score|...")
+    parser.add_argument("-m", "--mask", default="True", choices=[
+                        "False", "True"], help="If True, splice gains (increases in score) at annotated splice sites and splice losses (decreases in score) at unannotated splice sites will be set to 0. (Default: True)")
+    parser.add_argument("-s", "--score_cutoff", type=float,
+                        help="Output all sites with absolute predicted change in score >= cutoff, instead of only the maximum loss/gain sites.")
+    parser.add_argument("-d", "--distance", type=int, default=50,
+                        help="Number of bases on either side of the variant for which splice scores should be calculated. (Default: 50)")
+    parser.add_argument("--score_exons", default="False", choices=[
+                        "False", "True"], help="Output changes in score for both splice sites of annotated exons, as long as one splice site is within the considered range (specified by -d). Output will be: gene|site1_pos:score|site2_pos:score|...")
     args = parser.parse_args()
 
     variants = args.variant_file
@@ -282,7 +314,8 @@ def main():
                     model.cuda()
                     weights = torch.load(resource_path)
                 else:
-                    weights = torch.load(resource_path, map_location=torch.device('cpu'))
+                    weights = torch.load(
+                        resource_path, map_location=torch.device('cpu'))
             model.load_state_dict(weights)
             model.eval()
             models.append(model)
@@ -295,20 +328,38 @@ def main():
             if line[0] != '#':
                 break
 
-        variants = vcf.Reader(filename=variants)
-        variants.infos["Pangolin"] = vcf.parser._Info(
-            "Pangolin",'.',"String","Pangolin splice scores. "
-            "Format: gene|pos:score_change|pos:score_change|...",'.','.')
-        fout = vcf.Writer(open(args.output_file+".vcf", 'w'), variants)
-
-        for i, variant in enumerate(variants):
-            scores = process_variant(lnum+i, str(variant.CHROM), int(variant.POS), variant.REF, str(variant.ALT[0]), gtf, models, args)
-            if scores:
-                variant.INFO["Pangolin"] = convert_scores_to_string(scores)
-            fout.write_record(variant)
-            fout.flush()
-
-        fout.close()
+        with pysam.VariantFile(variants) as variant_file, pysam.VariantFile(
+            args.output_file+".vcf", "w", header=variant_file.header
+        ) as out_variant_file:
+            out_variant_file.header.add_meta(
+                key="INFO",
+                items=[
+                    ("ID", "Pangolin"),
+                    ("Number", "."),
+                    ("Type", "String"),
+                    (
+                        "Description",
+                        "Pangolin splice scores. Format: gene|pos:score_change|pos:score_change|warnings,..."
+                    ),
+                ]
+            )
+            for i, variant_record in enumerate(variant_file):
+                variant_record.translate(out_variant_file.header)
+                assert variant_record.ref, f"Empty REF field in variant record {variant_record}"
+                assert variant_record.alts, f"Empty ALT field in variant record {variant_record}"
+                scores = process_variant(
+                    lnum + i,
+                    str(variant_record.contig),
+                    int(variant_record.pos),
+                    variant_record.ref,
+                    str(variant_record.alts[0]),
+                    gtf,
+                    models,
+                    args,
+                )
+                if scores is not None:
+                    variant_record.info["Pangolin"] = convert_scores_to_string(scores)
+                out_variant_file.write(variant_record)
 
     elif variants.endswith(".csv"):
         col_ids = args.column_ids.split(',')
@@ -321,7 +372,8 @@ def main():
                 for lnum, variant in enumerate(reader):
                     chr, pos, ref, alt = (variant[x] for x in col_ids)
                     ref, alt = ref.upper(), alt.upper()
-                    scores = process_variant(lnum+1, str(chr), int(pos), ref, alt, gtf, models, args)
+                    scores = process_variant(
+                        lnum+1, str(chr), int(pos), ref, alt, gtf, models, args)
                     if scores:
                         variant['Pangolin'] = convert_scores_to_string(scores)
                     writer.writerow(variant)
