@@ -13,7 +13,7 @@ See below for information on usage and local installation.
 * Install other dependencies:
   ```
   conda install -c conda-forge pyvcf
-  pip install gffutils biopython pandas pyfastx
+  pip install gffutils pandas pyfastx
   ```
 * Install Pangolin:
   ```
