@@ -1,0 +1,4 @@
+gffutils>=0.13
+pyfastx>=2.1.0
+PyVCF3>=1.0.3
+pandas # would be nice to remove this dependency - only used for read_csv
