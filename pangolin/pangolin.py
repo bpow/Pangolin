@@ -1,9 +1,10 @@
 import argparse
+import os
+import csv
 from pkg_resources import resource_filename
 from pangolin.model import *
 import vcf
 import gffutils
-import pandas as pd
 import pyfastx
 # import time
 # startTime = time.time()
@@ -257,22 +258,19 @@ def main():
 
     elif variants.endswith(".csv"):
         col_ids = args.column_ids.split(',')
-        variants = pd.read_csv(variants, header=0)
-        fout = open(args.output_file+".csv", 'w')
-        fout.write(','.join(variants.columns)+',Pangolin\n')
-        fout.flush()
+        with open(variants, 'r') as csvfile:
+            reader = csv.DictReader(csvfile)
+            with open(args.output_file+".csv", 'w') as fout:
+                writer = csv.DictWriter(fout, fieldnames=reader.fieldnames+["Pangolin"], lineterminator=os.linesep
 
-        for lnum, variant in variants.iterrows():
-            chr, pos, ref, alt = variant[col_ids]
-            ref, alt = ref.upper(), alt.upper()
-            scores = process_variant(lnum+1, str(chr), int(pos), ref, alt, gtf, models, args)
-            if scores == -1:
-                fout.write(','.join(variant.to_csv(header=False, index=False).split('\n'))+'\n')
-            else:
-                fout.write(','.join(variant.to_csv(header=False, index=False).split('\n'))+scores+'\n')
-            fout.flush()
-
-        fout.close()
+                writer.writeheader()
+                for lnum, variant in enumerate(reader):
+                    chr, pos, ref, alt = (variant[x] for x in col_ids)
+                    ref, alt = ref.upper(), alt.upper()
+                    scores = process_variant(lnum+1, str(chr), int(pos), ref, alt, gtf, models, args)
+                    if scores != -1:
+                        variant['Pangolin'] = scores
+                    writer.writerow(variant)
 
     else:
         print("ERROR, variant_file needs to be a CSV or VCF.")
