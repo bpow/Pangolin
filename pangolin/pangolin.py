@@ -1,5 +1,9 @@
 import argparse
-from pkg_resources import resource_filename
+import sys
+if sys.version_info >= (3, 9):
+    import importlib.resources as importlib_resources
+else:
+    import importlib_resources
 from pangolin.model import *
 import vcf
 import gffutils
@@ -223,11 +227,13 @@ def main():
     for i in [0,2,4,6]:
         for j in range(1,4):
             model = Pangolin(L, W, AR)
-            if torch.cuda.is_available():
-                model.cuda()
-                weights = torch.load(resource_filename(__name__,"models/final.%s.%s.3.v2" % (j, i)))
-            else:
-                weights = torch.load(resource_filename(__name__,"models/final.%s.%s.3.v2" % (j, i)), map_location=torch.device('cpu'))
+            resource_ref = importlib_resources.files(__name__) / f"models/final.{j}.{i}.3.v2"
+            with importlib_resources.as_file(resource_ref) as resource_path:
+                if torch.cuda.is_available():
+                    model.cuda()
+                    weights = torch.load(resource_path)
+                else:
+                    weights = torch.load(resource_path, map_location=torch.device('cpu'))
             model.load_state_dict(weights)
             model.eval()
             models.append(model)
