@@ -3,10 +3,11 @@ requires = ["setuptools>=61.0", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pangolin"
+name = "pangolin_bp"
 dynamic = ["version"]
 authors = [
-    {name = "Tony Zeng", email = "tkyzeng@gmail.com" }
+    {name = "Tony Zeng", email = "tkyzeng@gmail.com" },
+    {name = "Bradford Powell", email = "bpow@drpowell.org" },
 ]
 requires-python = ">=3.9"
 description = "Pangolin splice prediction tool"
