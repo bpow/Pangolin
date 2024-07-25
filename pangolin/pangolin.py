@@ -9,7 +9,6 @@ else:
 from pangolin.model import L, W, AR, Pangolin
 import gffutils
 import numpy as np
-import pyfastx
 import torch
 import pysam
 
@@ -150,15 +149,15 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
               lnum, "WARNING, skipping variant: Deletion too large")
         return None
 
-    fasta = pyfastx.Fasta(args.reference_file)
+    fasta = pysam.FastaFile(args.reference_file)
     # try to make vcf chromosomes compatible with reference chromosomes
-    if chr not in fasta.keys() and "chr"+chr in fasta.keys():
+    if chr not in fasta.references and "chr"+chr in fasta.references:
         chr = "chr"+chr
-    elif chr not in fasta.keys() and chr[3:] in fasta.keys():
+    elif chr not in fasta.references and chr[3:] in fasta.references:
         chr = chr[3:]
 
     try:
-        seq = fasta[chr][pos-5001-d:pos+len(ref)+4999+d].seq
+        seq = fasta.fetch(chr, pos-5001-d, pos+len(ref)+4999+d)
     except Exception as e:
         print(e)
         print("[Line %s]" % lnum, "WARNING, skipping variant: Could not get sequence, possibly because the variant is too close to chromosome ends. "
