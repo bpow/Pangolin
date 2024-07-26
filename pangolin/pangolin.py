@@ -330,17 +330,11 @@ def main():
             model.eval()
             models.append(model)
 
-    if variants.endswith(".vcf"):
-        lnum = 0
-        # count the number of header lines
-        for line in open(variants, 'r'):
-            lnum += 1
-            if line[0] != '#':
-                break
-
+    if variants.endswith(".vcf") or variants.endswith(".vcf.gz"):
         with pysam.VariantFile(variants) as variant_file, pysam.VariantFile(
-            args.output_file+".vcf", "w", header=variant_file.header
+            args.output_file+".vcf.gz", "w", header=variant_file.header
         ) as out_variant_file:
+            lnum = len(str(variant_file.header).split("\n"))
             out_variant_file.header.add_meta(
                 key="INFO",
                 items=[
