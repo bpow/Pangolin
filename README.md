@@ -1,5 +1,7 @@
 # Pangolin
 
+**NOTE**: This version (with package name pangolin_bp) has been modified from upstream, see the git history...
+
 Pangolin is a deep-learning based method for predicting splice site strengths (for details, see [Zeng and Li, Genome Biology 2022](https://doi.org/10.1186/s13059-022-02664-4)). It is available as a command-line tool that can be run on a VCF or CSV file containing variants of interest; Pangolin will predict changes in splice site strength due to each variant, and return a file of the same format. Pangolin's models can also be used with custom sequences.
 
 Pangolin can be run on Google Colab, which provides free acess to GPUs and other computing resources: https://colab.research.google.com/github/tkzeng/Pangolin/blob/main/PangolinColab.ipynb
@@ -25,22 +27,21 @@ See below for information on usage and local installation.
 ### Usage (command-line)
 
 1. Create an annotation database from a GTF file using `scripts/create_db.py`. This will take several minutes. By default, it looks for the Ensembl_canonical tag to identify a primary transcript for each gene. Example usage:
+   
+   Gencode data for hg38 (which would need to be processed to make the sqlite gffutils db) are
+   available at: https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/gencode.v46.basic.annotation.gtf.gz
+
    ```
-   python scripts/create_db.py gencode.v38lift37.annotation.gtf.gz
-   # output: gencode.v38lift37.annotation.db
+   wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/gencode.v46.basic.annotation.gtf.gz
+   create_gffutils_db.py gencode.v46.basic.annotation.gtf.gz
    ```
 
-   Annotation databases for GENCODE Release 38 (released 5/5/21) can be downloaded from: https://www.dropbox.com/sh/6zo0aegoalvgd9f/AADWN_cGIWpvVN9BYJ37vGmZa?dl=0
-   * `gencode.v38.annotation.db`: GENCODE gene annotations for GRCh38 for transcripts with the Ensembl_canonical tag
-      ```
-      # download annotation file
-      wget https://www.dropbox.com/sh/6zo0aegoalvgd9f/AADOhGYJo8tbUhpscp3wSFj6a/gencode.v38.annotation.db
-      ```
-   * `gencode.v38lift37.annotation.db`: GENCODE gene annotations for GRCh38 (lifted to GRCh37) for transcripts with the Ensembl_canonical, appris_principal, appris_candidate, or appris_candidate_longest tags
-      ```
-      # download annotation file
-      wget https://www.dropbox.com/sh/6zo0aegoalvgd9f/AAA9Q90Pi1UqSzX99R_NM803a/gencode.v38lift37.annotation.db
-      ```
+   Similarly you will need a reference sequence:
+   ```
+   wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/GRCh38.primary_assembly.genome.fa.gz
+   ```
+
+   Left to document later: need to decompress then bgzip...
 
 2. Run Pangolin on a VCF or CSV file containing a list of variants. Under default settings, the maximum increase and decrease in score within 50 bases of the variant, along with their positions, will be reported. Format in the output file: `gene|pos:largest_increase|pos:largest_decrease|`
    * Only substitutions and simple insertions/deletions (either the REF or ALT field is a single base) are currently supported.
