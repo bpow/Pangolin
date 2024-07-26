@@ -24,6 +24,15 @@ IN_MAP = np.asarray([[0, 0, 0, 0],
                      [0, 0, 1, 0],
                      [0, 0, 0, 1]])
 
+def refseq2ens(chrom):
+    if not chrom.startswith('NC_'):
+        return chrom
+    chrom = int(float(chrom[3:]))
+    if chrom == 23:
+        return 'X'
+    elif chrom == 24:
+        return 'Y'
+    return str(chrom)
 
 def one_hot_encode(seq, strand):
     seq = seq.upper().replace('A', '1').replace('C', '2')
@@ -150,6 +159,8 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
 
     fasta = pysam.FastaFile(args.reference_file)
     # try to make vcf chromosomes compatible with reference chromosomes
+    if chr.startswith('NC_'):
+        chr = refseq2ens(chr)
     if chr not in fasta.references and "chr"+chr in fasta.references:
         chr = "chr"+chr
     elif chr not in fasta.references and chr[3:] in fasta.references:
