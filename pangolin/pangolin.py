@@ -107,8 +107,7 @@ def compute_score(ref_seq, alt_seq, strand, d, models):
 
     # basic internal consistency checks
     if len(loss) != len(loss_alt) or len(loss) != len(loss_ref):
-        raise ValueError(f"len(loss) != len(loss_alt) or len(loss) != len(loss_ref): {
-                         len(loss)} != {len(loss_alt)} or {len(loss)} != {len(loss_ref)}")
+        raise ValueError(f"len(loss) != len(loss_alt) or len(loss) != len(loss_ref): {len(loss)} != {len(loss_alt)} or {len(loss)} != {len(loss_ref)}")
     if any(abs(l - (a - r)) > 1e-5 for l, a, r in zip(loss, loss_alt, loss_ref)):
         raise ValueError("Internal error: loss != loss_alt - loss_ref")
 
@@ -225,11 +224,9 @@ def process_variant(lnum, chr, pos, ref, alt, gtf, models, args):
                     loss[:] = np.maximum(loss[:], 0)
 
             if len(genomic_coords) != len(gain):
-                raise ValueError(f"Internal error: len(genomic_coords) != len(gain): {
-                                 len(genomic_coords)} != {len(gain)}")
+                raise ValueError(f"Internal error: len(genomic_coords) != len(gain): {len(genomic_coords)} != {len(gain)}")
             if len(genomic_coords) != len(loss):
-                raise ValueError(f"Internal error: len(genomic_coords) != len(loss): {
-                                 len(genomic_coords)} != {len(loss)}")
+                raise ValueError(f"Internal error: len(genomic_coords) != len(loss): {len(genomic_coords)} != {len(loss)}")
 
             l, g = np.argmin(loss), np.argmax(gain)
             results.append({
